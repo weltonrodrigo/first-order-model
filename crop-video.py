@@ -2,6 +2,8 @@ import face_alignment
 import skimage.io
 import numpy
 from argparse import ArgumentParser
+
+from scipy.spatial import ConvexHull
 from skimage import img_as_ubyte
 from skimage.transform import resize
 from tqdm import tqdm
@@ -23,8 +25,6 @@ def extract_bbox(frame, fa):
     if len(bboxes) == 0:
         return []
     return np.array(bboxes)[:, :-1] * scale_factor
-
-
 
 def bb_intersection_over_union(boxA, boxB):
     xA = max(boxA[0], boxB[0])
@@ -80,15 +80,28 @@ def compute_bbox_trajectories(trajectories, fps, frame_shape, args):
 
 
 def process_video(args):
-    fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
+    fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False,
+        device='cpu' if args.cpu else 'cuda')
     video = imageio.get_reader(args.inp)
 
     trajectories = []
     previous_frame = None
-    fps = video.get_meta_data()['fps']
+
+    metadata = video.get_meta_data()
+
+    total_frames = None
+    fps = None
+    try:
+        fps = metadata.get('fps')
+        duration = metadata.get('duration')
+        total_frames = int(duration * fps)
+    except Exception as e:
+        print("Could not determine number of frames. Processing anyway.")
+
+
     commands = []
     try:
-        for i, frame in tqdm(enumerate(video)):
+        for i, frame in tqdm(enumerate(video), total=total_frames, unit='frame'):
             frame_shape = frame.shape
             bboxes =  extract_bbox(frame, fa)
             ## For each trajectory check the criterion
@@ -142,7 +155,8 @@ if __name__ == "__main__":
     parser.add_argument("--increase", default=0.1, type=float, help='Increase bbox by this amount')
     parser.add_argument("--iou_with_initial", type=float, default=0.25, help="The minimal allowed iou with inital bbox")
     parser.add_argument("--inp", required=True, help='Input image or video')
-    parser.add_argument("--min_frames", type=int, default=150,  help='Minimum number of frames')    
+    parser.add_argument("--min_frames", type=int, default=150,  help='Minimum number of frames')
+    parser.add_argument("--cpu", dest="cpu", default=False, action="store_true", help="cpu mode.")
 
    
     args = parser.parse_args()
